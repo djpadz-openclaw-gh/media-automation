@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,36 +14,9 @@ from typing import Any
 import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SONARR_URL = "http://dindjarin.tail1916d.ts.net:8989"
-STATE_FILE  = Path(__file__).parent / "sonarr_notified.json"
-
-TELEGRAM_BOT_TOKEN_ITEM = "Telegram API: openclaw_djpadz_bot"
-SONARR_KEY_ITEM         = "Sonarr API key"
-OP_VAULT                = "OpenClaw"
-TELEGRAM_CHAT_ID        = "8623402151"   # Dj's Telegram
-
-# ── 1Password helpers ─────────────────────────────────────────────────────────
-
-def _op_token() -> str:
-    token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
-    if not token:
-        raise ValueError("OP_SERVICE_ACCOUNT_TOKEN environment variable not set")
-    return token
-
-
-def op_get_field(item_name: str, field_label: str) -> str:
-    env = os.environ.copy()
-    env["OP_SERVICE_ACCOUNT_TOKEN"] = _op_token()
-    result = subprocess.run(
-        ["op", "item", "get", item_name, "--vault", OP_VAULT, "--format", "json"],
-        capture_output=True, text=True, env=env, check=True,
-    )
-    item: dict[str, Any] = json.loads(result.stdout)
-    for field in item.get("fields", []):
-        if field.get("label") == field_label:
-            return field.get("value", "")
-    raise ValueError(f"Field '{field_label}' not found in 1Password item '{item_name}'")
-
+SONARR_URL = os.environ.get("SONARR_URL", "http://dindjarin.tail1916d.ts.net:8989")
+STATE_FILE = Path("/app/state/sonarr_notified.json")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8623402151")
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -55,6 +27,7 @@ def load_state() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
@@ -167,8 +140,13 @@ def format_episode(rec: dict[str, Any]) -> str:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    api_key   = op_get_field(SONARR_KEY_ITEM, "API Key")
-    bot_token = op_get_field(TELEGRAM_BOT_TOKEN_ITEM, "password")
+    api_key = os.environ.get("SONARR_API_KEY")
+    if not api_key:
+        raise ValueError("SONARR_API_KEY environment variable not set")
+
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set")
 
     state   = load_state()
     since   = state["last_history_id"]
