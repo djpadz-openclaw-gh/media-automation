@@ -1,0 +1,91 @@
+---
+# CronJob: sonarr-notifier
+# Polls Sonarr every 15 minutes for new episode imports and sends Telegram alerts.
+# Uses Tailscale sidecar (native sidecar, requires Kubernetes 1.28+) for MagicDNS.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sonarr-notifier
+  namespace: media-automation
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          serviceAccountName: tailscale
+          restartPolicy: Never
+
+          # Native sidecar container (Kubernetes 1.28+)
+          # Starts before main containers and is terminated automatically when
+          # the pod's main containers exit.
+          initContainers:
+            - name: tailscale
+              image: ghcr.io/tailscale/tailscale:latest
+              restartPolicy: Always  # Makes this a native sidecar
+              env:
+                - name: TS_AUTHKEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tailscale-auth
+                      key: TS_AUTHKEY
+                - name: TS_KUBE_SECRET
+                  value: "tailscale-state-sonarr"
+                - name: TS_ACCEPT_DNS
+                  value: "true"
+                - name: TS_HOSTNAME
+                  value: "media-automation-sonarr"
+              securityContext:
+                capabilities:
+                  add:
+                    - NET_ADMIN
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+              # Wait until Tailscale is fully connected before starting main container
+              readinessProbe:
+                exec:
+                  command:
+                    - /bin/sh
+                    - -c
+                    - tailscale status --peers=false
+                initialDelaySeconds: 5
+                periodSeconds: 3
+                failureThreshold: 20
+
+          containers:
+            - name: sonarr-notifier
+              image: ghcr.io/djpadz/media-automation:latest
+              args: ["notify_sonarr.py"]
+              env:
+                - name: SONARR_URL
+                  value: "http://dindjarin.tail1916d.ts.net:8989"
+                - name: OP_SERVICE_ACCOUNT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: op-service-account
+                      key: OP_SERVICE_ACCOUNT_TOKEN
+              volumeMounts:
+                - name: state
+                  mountPath: /app/state
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+
+          volumes:
+            - name: state
+              persistentVolumeClaim:
+                claimName: notifier-state

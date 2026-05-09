@@ -98,9 +98,12 @@ def enrich_records(records: list[dict[str, Any]], api_key: str) -> list[dict[str
 # ── Telegram ──────────────────────────────────────────────────────────────────
 
 def send_telegram(bot_token: str, chat_id: str, text: str) -> None:
+    print(f"DEBUG: Sending message to chat_id={chat_id} (type: {type(chat_id).__name__})")
+    print(f"DEBUG: Message length: {len(text)} chars")
+    print(f"DEBUG: Message preview: {text[:200]}...")
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        json={"chat_id": int(chat_id), "text": text, "parse_mode": "Markdown"},
         timeout=10,
     )
     resp.raise_for_status()
@@ -111,11 +114,11 @@ def format_movie(rec: dict[str, Any]) -> str:
     year   = rec["_year"]
     quality = rec.get("quality", {}).get("quality", {}).get("name", "")
 
-    line = f"🎬 <b>{title}</b>"
+    line = f"🎬 *{title}*"
     if year:
         line += f" ({year})"
     if quality:
-        line += f" <i>[{quality}]</i>"
+        line += f" _{quality}_"
     return line
 
 
@@ -144,14 +147,21 @@ def main() -> None:
     records = enrich_records(records, api_key)
 
     # Build message — keep under Telegram's 4096-char limit
-    lines: list[str] = ["🎥 <b>New in Radarr</b>"]
+    lines: list[str] = ["🎥 *New in Radarr*"]
     for rec in records:
         lines.append(format_movie(rec))
 
     message = "\n".join(lines)
     if len(message) > 4000:
-        # Truncate gracefully
-        message = message[:3950] + "\n…(truncated)"
+        # Truncate gracefully without breaking HTML tags
+        message = message[:3950]
+        # Remove any incomplete HTML tags at the end
+        last_tag_start = message.rfind('<')
+        last_tag_end = message.rfind('>')
+        if last_tag_start > last_tag_end:
+            # There's an unclosed tag, remove it
+            message = message[:last_tag_start]
+        message = message.rstrip() + "\n…(truncated)"
 
     send_telegram(bot_token, TELEGRAM_CHAT_ID, message)
     print(f"Sent notification for {len(records)} movie(s).")

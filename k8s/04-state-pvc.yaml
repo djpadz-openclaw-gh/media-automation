@@ -1,0 +1,13 @@
+---
+# Persistent storage for notifier state files (last_history_id tracking).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: notifier-state
+  namespace: media-automation
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 64Mi

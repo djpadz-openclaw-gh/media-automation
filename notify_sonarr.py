@@ -116,7 +116,7 @@ def enrich_records(records: list[dict[str, Any]], api_key: str) -> list[dict[str
 def send_telegram(bot_token: str, chat_id: str, text: str) -> None:
     resp = requests.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        json={"chat_id": int(chat_id), "text": text, "parse_mode": "Markdown"},
         timeout=10,
     )
     resp.raise_for_status()
@@ -129,11 +129,11 @@ def format_episode(rec: dict[str, Any]) -> str:
     ep_title = rec["_episodeTitle"]
     quality  = rec.get("quality", {}).get("quality", {}).get("name", "")
 
-    line = f"📺 <b>{title}</b> — S{season:02d}E{ep:02d}"
+    line = f"📺 *{title}* — S{season:02d}E{ep:02d}"
     if ep_title:
         line += f": {ep_title}"
     if quality:
-        line += f" <i>({quality})</i>"
+        line += f" _{quality}_"
     return line
 
 
@@ -168,15 +168,22 @@ def main() -> None:
         by_series.setdefault(key, []).append(rec)
 
     # Build message(s) — keep under Telegram's 4096-char limit
-    lines: list[str] = ["🎬 <b>New in Sonarr</b>"]
+    lines: list[str] = ["🎬 *New in Sonarr*"]
     for series_title, eps in sorted(by_series.items()):
         for rec in eps:
             lines.append(format_episode(rec))
 
     message = "\n".join(lines)
     if len(message) > 4000:
-        # Truncate gracefully
-        message = message[:3950] + "\n…(truncated)"
+        # Truncate gracefully without breaking HTML tags
+        message = message[:3950]
+        # Remove any incomplete HTML tags at the end
+        last_tag_start = message.rfind('<')
+        last_tag_end = message.rfind('>')
+        if last_tag_start > last_tag_end:
+            # There's an unclosed tag, remove it
+            message = message[:last_tag_start]
+        message = message.rstrip() + "\n…(truncated)"
 
     send_telegram(bot_token, TELEGRAM_CHAT_ID, message)
     print(f"Sent notification for {len(records)} episode(s).")
