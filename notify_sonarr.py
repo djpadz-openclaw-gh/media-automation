@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""
+notify_sonarr.py — Alert via Telegram when new episodes are imported into Sonarr.
+Tracks last-seen history ID in a state file to avoid re-alerting.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import requests
+
+# ── Config ────────────────────────────────────────────────────────────────────
+SONARR_URL = "http://dindjarin.tail1916d.ts.net:8989"
+STATE_FILE  = Path(__file__).parent / "sonarr_notified.json"
+
+TELEGRAM_BOT_TOKEN_ITEM = "Telegram API: openclaw_djpadz_bot"
+SONARR_KEY_ITEM         = "Sonarr API key"
+OP_VAULT                = "OpenClaw"
+TELEGRAM_CHAT_ID        = "8623402151"   # Dj's Telegram
+
+# ── 1Password helpers ─────────────────────────────────────────────────────────
+
+def _op_token() -> str:
+    token_path = Path(__file__).parent.parent / ".op-service-account"
+    return token_path.read_text().strip()
+
+
+def op_get_field(item_name: str, field_label: str) -> str:
+    env = os.environ.copy()
+    env["OP_SERVICE_ACCOUNT_TOKEN"] = _op_token()
+    result = subprocess.run(
+        ["op", "item", "get", item_name, "--vault", OP_VAULT, "--format", "json"],
+        capture_output=True, text=True, env=env, check=True,
+    )
+    item: dict[str, Any] = json.loads(result.stdout)
+    for field in item.get("fields", []):
+        if field.get("label") == field_label:
+            return field.get("value", "")
+    raise ValueError(f"Field '{field_label}' not found in 1Password item '{item_name}'")
+
+
+# ── State ─────────────────────────────────────────────────────────────────────
+
+def load_state() -> dict[str, Any]:
+    if STATE_FILE.exists():
+        return json.loads(STATE_FILE.read_text())
+    return {"last_history_id": 0}
+
+
+def save_state(state: dict[str, Any]) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+# ── Sonarr ────────────────────────────────────────────────────────────────────
+
+def sonarr_get(path: str, api_key: str, params: dict[str, Any] | None = None) -> Any:
+    resp = requests.get(
+        f"{SONARR_URL}/api/v3/{path}",
+        headers={"X-Api-Key": api_key},
+        params=params,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_new_imports(api_key: str, since_id: int) -> list[dict[str, Any]]:
+    """Return downloadFolderImported records with id > since_id, oldest-first."""
+    page = 1
+    page_size = 50
+    new_records: list[dict[str, Any]] = []
+
+    while True:
+        data = sonarr_get("history", api_key, {
+            "page": page,
+            "pageSize": page_size,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "eventType": 3,   # downloadFolderImported
+        })
+        records: list[dict[str, Any]] = data.get("records", [])
+        if not records:
+            break
+
+        done = False
+        for rec in records:
+            if rec["id"] <= since_id:
+                done = True
+                break
+            new_records.append(rec)
+
+        if done or page * page_size >= data.get("totalRecords", 0):
+            break
+        page += 1
+
+    # Return oldest-first so notifications are chronological
+    return list(reversed(new_records))
+
+
+def enrich_records(records: list[dict[str, Any]], api_key: str) -> list[dict[str, Any]]:
+    """Add series title + episode info to all records, batching series lookups."""
+    # Fetch all series once (single API call)
+    try:
+        all_series: list[dict[str, Any]] = sonarr_get("series", api_key)
+        series_map: dict[int, dict[str, Any]] = {s["id"]: s for s in all_series}
+    except Exception:
+        series_map = {}
+
+    # Fetch episode details in bulk by series
+    series_ids = {r["seriesId"] for r in records}
+    episode_map: dict[int, dict[str, Any]] = {}
+    for sid in series_ids:
+        try:
+            eps: list[dict[str, Any]] = sonarr_get("episode", api_key, {"seriesId": sid})
+            for ep in eps:
+                episode_map[ep["id"]] = ep
+        except Exception:
+            pass
+
+    for rec in records:
+        series = series_map.get(rec["seriesId"], {})
+        rec["_seriesTitle"] = series.get("title", f"Series #{rec['seriesId']}")
+        rec["_seriesYear"]  = series.get("year")
+        rec["_network"]     = series.get("network", "")
+
+        episode = episode_map.get(rec["episodeId"], {})
+        rec["_season"]       = episode.get("seasonNumber", 0)
+        rec["_episode"]      = episode.get("episodeNumber", 0)
+        rec["_episodeTitle"] = episode.get("title", "")
+
+    return records
+
+
+# ── Telegram ──────────────────────────────────────────────────────────────────
+
+def send_telegram(bot_token: str, chat_id: str, text: str) -> None:
+    resp = requests.post(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+
+
+def format_episode(rec: dict[str, Any]) -> str:
+    title  = rec["_seriesTitle"]
+    season = rec["_season"]
+    ep     = rec["_episode"]
+    ep_title = rec["_episodeTitle"]
+    quality  = rec.get("quality", {}).get("quality", {}).get("name", "")
+
+    line = f"📺 <b>{title}</b> — S{season:02d}E{ep:02d}"
+    if ep_title:
+        line += f": {ep_title}"
+    if quality:
+        line += f" <i>({quality})</i>"
+    return line
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    api_key   = op_get_field(SONARR_KEY_ITEM, "API Key")
+    bot_token = op_get_field(TELEGRAM_BOT_TOKEN_ITEM, "password")
+
+    state   = load_state()
+    since   = state["last_history_id"]
+    records = get_new_imports(api_key, since)
+
+    if not records:
+        print("No new imports since last check.")
+        return
+
+    print(f"Found {len(records)} new import(s).")
+
+    # Enrich all records at once (batched series + episode lookups)
+    records = enrich_records(records, api_key)
+
+    # Group by series for cleaner notifications
+    by_series: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        key = rec["_seriesTitle"]
+        by_series.setdefault(key, []).append(rec)
+
+    # Build message(s) — keep under Telegram's 4096-char limit
+    lines: list[str] = ["🎬 <b>New in Sonarr</b>"]
+    for series_title, eps in sorted(by_series.items()):
+        for rec in eps:
+            lines.append(format_episode(rec))
+
+    message = "\n".join(lines)
+    if len(message) > 4000:
+        # Truncate gracefully
+        message = message[:3950] + "\n…(truncated)"
+
+    send_telegram(bot_token, TELEGRAM_CHAT_ID, message)
+    print(f"Sent notification for {len(records)} episode(s).")
+
+    # Save highest ID seen
+    max_id = max(r["id"] for r in records)
+    state["last_history_id"] = max_id
+    save_state(state)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
