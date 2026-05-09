@@ -26,8 +26,10 @@ TELEGRAM_CHAT_ID        = "8623402151"   # Dj's Telegram
 # ── 1Password helpers ─────────────────────────────────────────────────────────
 
 def _op_token() -> str:
-    token_path = Path(__file__).parent.parent / ".op-service-account"
-    return token_path.read_text().strip()
+    token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN")
+    if not token:
+        raise ValueError("OP_SERVICE_ACCOUNT_TOKEN environment variable not set")
+    return token
 
 
 def op_get_field(item_name: str, field_label: str) -> str:
