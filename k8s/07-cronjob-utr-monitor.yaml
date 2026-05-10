@@ -1,0 +1,52 @@
+---
+# CronJob: utr-monitor
+# Polls Ubiquiti store every 30 minutes for Travel Router availability.
+# Sends Telegram alert if product becomes available.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: utr-monitor
+  namespace: media-automation
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 300
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: utr-monitor
+              image: registry.container-registry.svc.cluster.local:32000/media-automation:latest
+              imagePullPolicy: Always
+              args: ["monitor_utr.py"]
+              env:
+                - name: TELEGRAM_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: media-automation-secrets
+                      key: TELEGRAM_BOT_TOKEN
+                - name: TELEGRAM_CHAT_ID
+                  valueFrom:
+                    configMapKeyRef:
+                      name: media-automation-config
+                      key: TELEGRAM_CHAT_ID
+              volumeMounts:
+                - name: state
+                  mountPath: /app/state
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          volumes:
+            - name: state
+              persistentVolumeClaim:
+                claimName: media-automation-state
