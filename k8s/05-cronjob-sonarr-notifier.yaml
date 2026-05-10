@@ -29,11 +29,21 @@ spec:
               env:
                 - name: SONARR_URL
                   value: "http://dindjarin.tail1916d.ts.net:8989"
-                - name: OP_SERVICE_ACCOUNT_TOKEN
+                - name: SONARR_API_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: op-service-account
-                      key: OP_SERVICE_ACCOUNT_TOKEN
+                      name: media-automation-secrets
+                      key: SONARR_API_KEY
+                - name: TELEGRAM_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: media-automation-secrets
+                      key: TELEGRAM_BOT_TOKEN
+                - name: TELEGRAM_CHAT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: media-automation-secrets
+                      key: TELEGRAM_CHAT_ID
               volumeMounts:
                 - name: state
                   mountPath: /app/state
