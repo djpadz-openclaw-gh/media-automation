@@ -19,49 +19,7 @@ spec:
       ttlSecondsAfterFinished: 300
       template:
         spec:
-          serviceAccountName: tailscale
           restartPolicy: Never
-
-          # Native sidecar container (Kubernetes 1.28+)
-          # Starts before main containers and is terminated automatically when
-          # the pod's main containers exit.
-          initContainers:
-            - name: tailscale
-              image: ghcr.io/tailscale/tailscale:latest
-              restartPolicy: Always  # Makes this a native sidecar
-              env:
-                - name: TS_AUTHKEY
-                  valueFrom:
-                    secretKeyRef:
-                      name: tailscale-auth
-                      key: TS_AUTHKEY
-                - name: TS_KUBE_SECRET
-                  value: "tailscale-state-sonarr"
-                - name: TS_ACCEPT_DNS
-                  value: "true"
-                - name: TS_HOSTNAME
-                  value: "media-automation-sonarr"
-              securityContext:
-                capabilities:
-                  add:
-                    - NET_ADMIN
-              resources:
-                requests:
-                  cpu: 50m
-                  memory: 64Mi
-                limits:
-                  cpu: 200m
-                  memory: 128Mi
-              # Wait until Tailscale is fully connected before starting main container
-              readinessProbe:
-                exec:
-                  command:
-                    - /bin/sh
-                    - -c
-                    - tailscale status --peers=false
-                initialDelaySeconds: 5
-                periodSeconds: 3
-                failureThreshold: 20
 
           containers:
             - name: sonarr-notifier
