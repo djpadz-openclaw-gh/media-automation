@@ -16,6 +16,7 @@ spec:
     spec:
       backoffLimit: 2
       activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 300
       template:
         spec:
           serviceAccountName: tailscale
@@ -64,7 +65,8 @@ spec:
 
           containers:
             - name: sonarr-notifier
-              image: ghcr.io/djpadz/media-automation:latest
+              image: registry.container-registry.svc.cluster.local:32000/media-automation:latest
+              imagePullPolicy: Always
               args: ["notify_sonarr.py"]
               env:
                 - name: SONARR_URL
@@ -88,4 +90,4 @@ spec:
           volumes:
             - name: state
               persistentVolumeClaim:
-                claimName: notifier-state
+                claimName: media-automation-state

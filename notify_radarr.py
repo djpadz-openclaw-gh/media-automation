@@ -109,8 +109,15 @@ def send_telegram(bot_token: str, chat_id: str, text: str) -> None:
     resp.raise_for_status()
 
 
+def escape_markdown(text: str) -> str:
+    """Escape special characters for Telegram Markdown."""
+    for char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 def format_movie(rec: dict[str, Any]) -> str:
-    title  = rec["_title"]
+    title  = escape_markdown(rec["_title"])
     year   = rec["_year"]
     quality = rec.get("quality", {}).get("quality", {}).get("name", "")
 
