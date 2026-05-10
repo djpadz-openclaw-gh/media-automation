@@ -41,8 +41,8 @@ spec:
                       key: TELEGRAM_BOT_TOKEN
                 - name: TELEGRAM_CHAT_ID
                   valueFrom:
-                    secretKeyRef:
-                      name: media-automation-secrets
+                    configMapKeyRef:
+                      name: media-automation-config
                       key: TELEGRAM_CHAT_ID
               volumeMounts:
                 - name: state
